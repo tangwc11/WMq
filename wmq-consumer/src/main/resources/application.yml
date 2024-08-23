@@ -1,0 +1,6 @@
+server:
+  port: 10400
+
+logging:
+  level:
+    root: info
