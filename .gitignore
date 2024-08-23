@@ -22,3 +22,14 @@
 # virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
 hs_err_pid*
 replay_pid*
+
+
+.DS_Store
+.idea/
+wmq-admin/target/
+wmq-broker/.DS_Store
+wmq-broker/target/
+wmq-consumer/target/
+wmq-core/target/
+wmq-producer/target/
+wmq/
