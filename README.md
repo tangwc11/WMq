@@ -99,37 +99,37 @@ WMq是MQ消息中间件的一个最小实现，设计思想借鉴了Kafka+Rocket
 ```
 WMq中zookeeper目录结构
 /wmq
-  |---clusterName：集群根目录
-        |---topic-registry：Topic注册根目录
-        			|---Topic-A：topic节点，记录name、parition、replica等元信息
-        			|---...
-        			
-        |---topic-registry-signal：信号节点，用于Broker监听并进行partion分区处理
-        
-        |---broker-registry：Broker的注册目录
-        			|---brokerId：记录broker基本信息，如host、port等信息，用于建立通信
+  |-clusterName：集群根目录
+    |-topic-registry：Topic注册根目录
+      |-Topic-A：topic节点，记录name、parition、replica等元信息
+      |-...
 
-        |---partition-registry：分区信息目录，
-              |---Topic-A：节点以topic命名，记录的是分区对应的Leader和Followers
-              |---Topic-B：
-              |---...
-              
-        |---partition-registry-version：分区同步协调节点，用于协调多个Broker监听的先后
-        
-        |---client-registry：客户端注册根目录，注册Producer和Consumer
-        			|---PRODUCER:UUID：记录的是Producer客户端的基本信息，host、port等，用于建立通信
-        			|---CONSUMER:UUDD：记录的是Consumer客户端的基本信息，host、port等，用于建立通信
-                
-        |---consumer-offset：消费位点信息，用于记录消费的进度
-              |---Topic-A
-              			|---[|group|partition]：采用二元组命名，节点值为消费到的offset信息。【此为zk持久节点】
-              |---Topic-B
-              			|---[|group|partition]：采用二元组命名，节点值为消费到的offset信息。【此为zk持久节点】
-              |---Topic-C
-              			|---[|group|partition]：采用二元组命名，节点值为消费到的offset信息。【此为zk持久节点】
-              
-        |---consumer-group-registry：consumer客户端节点目录，用于控制topic-group-partition与客户端的1v1关系
-              |---[topic|group|partition]：命名使用三元组，保证一个partition只有一个consumer消费，re-balance主要操作的就是这里
+    |-topic-registry-signal：信号节点，用于Broker监听并进行partion分区处理
+
+    |-broker-registry：Broker的注册目录
+      |-brokerId：记录broker基本信息，如host、port等信息，用于建立通信
+
+    |-partition-registry：分区信息目录，
+      |-Topic-A：节点以topic命名，记录的是分区对应的Leader和Followers
+      |-Topic-B：
+      |-...
+
+    |-partition-registry-version：分区同步协调节点，用于协调多个Broker监听的先后
+
+    |-client-registry：客户端注册根目录，注册Producer和Consumer
+      |-PRODUCER:UUID：记录的是Producer客户端的基本信息，host、port等，用于建立通信
+      |-CONSUMER:UUDD：记录的是Consumer客户端的基本信息，host、port等，用于建立通信
+
+    |-consumer-offset：消费位点信息，用于记录消费的进度
+      |-Topic-A
+          |-[|group|partition]：采用二元组命名，节点值为消费到的offset信息。【此为zk持久节点】
+      |-Topic-B
+          |-[|group|partition]：采用二元组命名，节点值为消费到的offset信息。【此为zk持久节点】
+      |-Topic-C
+          |-[|group|partition]：采用二元组命名，节点值为消费到的offset信息。【此为zk持久节点】
+
+    |-consumer-group-registry：consumer客户端节点目录，用于控制topic-group-partition与客户端的1v1关系
+          |-[topic|group|partition]：命名使用三元组，保证一个partition只有一个consumer消费，re-balance主要操作的就是这里
 ```
 
 
