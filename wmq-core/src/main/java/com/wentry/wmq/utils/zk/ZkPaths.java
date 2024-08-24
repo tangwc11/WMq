@@ -67,6 +67,10 @@ public class ZkPaths {
         return join(BASE, clusterName, TOPIC_REGISTRY, topic);
     }
 
+    public static String getConsumerInstanceDir(String clusterName) {
+        return join(BASE, clusterName, CONSUMER_GROUP);
+    }
+
     public static String getConsumerInstanceNode(String clusterName, String topic, String consumerGroup, Integer partition) {
         return join(BASE, clusterName, CONSUMER_GROUP, String.format(CONSUMER_GROUP_INST_NODE, topic, consumerGroup, partition));
     }

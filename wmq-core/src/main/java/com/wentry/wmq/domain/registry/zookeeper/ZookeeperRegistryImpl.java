@@ -75,6 +75,27 @@ public class ZookeeperRegistryImpl implements ZkRegistry, Closable {
     }
 
     @Override
+    public <T> boolean createNodeWithValue(CreateMode mode, String path, T val) {
+        Stat stat = checkExist(path);
+        if (stat != null) {
+            return false;
+        }
+        try {
+            //这里要保证原子性
+            client.create().creatingParentsIfNeeded()
+                    .withMode(mode)
+                    .forPath(path, JsonUtils.toJson(val).getBytes(StandardCharsets.UTF_8));
+
+            stat = checkExist(path);
+            log.info("createNodeWithValue state:{},path:{},val:{}", JsonUtils.toJson(stat), path, JsonUtils.toJson(val));
+            return true;
+        } catch (Exception e) {
+            log.error("ZookeeperRegistryImpl.createNodeWithValue("+"mode = " + mode + ", path = " + path + ", val = " + val+")",e);
+        }
+        return false;
+    }
+
+    @Override
     public <T> boolean updateVal(CreateMode mode, String path, T val) {
         try {
             if (nodeExists(path)) {
@@ -110,16 +131,17 @@ public class ZookeeperRegistryImpl implements ZkRegistry, Closable {
                     ZkPaths.getBrokerRegistryNodePath(brokerInfo.getClusterName(), brokerInfo.getBrokerId())
             );
         } catch (Exception e) {
-            log.warn("ZookeeperRegistryImpl.unRegistryBroker("+"brokerInfo = " + brokerInfo+")");
+            log.warn("ZookeeperRegistryImpl.unRegistryBroker(" + "brokerInfo = " + brokerInfo + ")");
         }
     }
 
     @Override
     public void deletePath(String path) {
         try {
+            log.info("deleting path:{}", path);
             client.delete().deletingChildrenIfNeeded().forPath(path);
         } catch (Exception e) {
-            log.warn("ZookeeperRegistryImpl.deletePath("+"path = " + path+")");
+            log.warn("ZookeeperRegistryImpl.deletePath(" + "path = " + path + ")");
         }
     }
 

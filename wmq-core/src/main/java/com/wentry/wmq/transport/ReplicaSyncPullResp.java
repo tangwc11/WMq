@@ -12,7 +12,7 @@ public class ReplicaSyncPullResp implements Serializable {
     private static final long serialVersionUID = 155889368018275L;
 
     boolean toEnd;
-    List<byte[]> data;
+    List<byte[]> datas;
     long endOffset;
     String failMsg;
     String extMsg;
@@ -44,12 +44,12 @@ public class ReplicaSyncPullResp implements Serializable {
         return this;
     }
 
-    public List<byte[]> getData() {
-        return data;
+    public List<byte[]> getDatas() {
+        return datas;
     }
 
-    public ReplicaSyncPullResp setData(List<byte[]> data) {
-        this.data = data;
+    public ReplicaSyncPullResp setDatas(List<byte[]> datas) {
+        this.datas = datas;
         return this;
     }
 

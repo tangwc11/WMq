@@ -16,7 +16,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
-import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -228,8 +227,6 @@ public class BrokerReader implements Closable {
                     datas.add(data);
                 }
             }
-            log.info("readForSync topic:{},partitionL{},currSize:{},req:{},res:{}",
-                    topic, partition, currSize, JsonUtils.toJson(req), JsonUtils.toJson(readRes));
             currSize++;
             startOffset = readRes.getNextOffset();
             endOffset = readRes.getNextOffset();
@@ -238,7 +235,11 @@ public class BrokerReader implements Closable {
                 && readRes.getData() != null
                 && currSize < pullSize);
 
-        return new ReplicaSyncPullResp().setExtMsg(readRes.getExtMsg()).setEndOffset(endOffset)
-                .setData(datas).setToEnd(readRes.isToEnd()).setFailMsg(readRes.getFailMsg());
+        ReplicaSyncPullResp res = new ReplicaSyncPullResp().setExtMsg(readRes.getExtMsg()).setEndOffset(endOffset)
+                .setDatas(datas).setToEnd(readRes.isToEnd()).setFailMsg(readRes.getFailMsg());
+        log.info(" currBroker:{}, readForSync prepare to resp for req:{}, resp:{}, dataSize:{}",
+                brokerState.getBrokerId(),JsonUtils.toJson(req),
+                JsonUtils.toJson(res, "datas"), CollectionUtils.size(res.getDatas()));
+        return res;
     }
 }

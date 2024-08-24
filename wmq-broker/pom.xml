@@ -10,8 +10,6 @@
         <version>1.0-SNAPSHOT</version>
     </parent>
 
-
-    <groupId>com.wentry</groupId>
     <artifactId>wmq-broker</artifactId>
 
     <properties>
@@ -36,7 +34,6 @@
 
     </dependencies>
 
-
     <build>
         <plugins>
             <plugin>
@@ -44,9 +41,10 @@
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <version>${spring-boot.version}</version>
                 <configuration>
-                    <mainClass>com.wentry.wraft.Application</mainClass> <!-- 指定主类 -->
+                    <mainClass>com.wentry.wmq.BrokerApplication</mainClass> <!-- 指定主类 -->
                     <layout>ZIP</layout> <!-- 指定JAR包布局，默认为ZIP -->
                     <classifier>exec</classifier> <!-- 可选，用于指定额外的分类器 -->
+                    <finalName>${artifactId}</finalName>
                 </configuration>
                 <executions>
                     <execution>
@@ -58,5 +56,4 @@
             </plugin>
         </plugins>
     </build>
-
 </project>

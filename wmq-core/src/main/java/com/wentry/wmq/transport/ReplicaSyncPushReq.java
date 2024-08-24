@@ -32,14 +32,6 @@ public class ReplicaSyncPushReq implements Serializable {
         return this;
     }
 
-    public byte[] getBytes() {
-        return bytes;
-    }
-
-    public ReplicaSyncPushReq setBytes(byte[] bytes) {
-        this.bytes = bytes;
-        return this;
-    }
 
     public long getPreOffset() {
         return preOffset;

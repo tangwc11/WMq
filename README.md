@@ -72,29 +72,46 @@ WMq是MQ消息中间件的一个最小实现，设计思想借鉴了Kafka+Rocket
 
 ### 1. Zookeeper目录结构
 
-类似于Zookeeper在WMq的
-
-
-
 
 
 ```
 WMq中zookeeper目录结构
 /wmq
-  |-----clusterName
-            |-----lock：锁区域，zk本来就是分布式锁的实现方式之一，用于多个监听器修改同一个节点的锁控制
-            |-----broker-id-registry：broker的信息，被broker和client监听，动态的更改topic-partition-registry
-                          |-----broker-1：host,port：临时节点，断联自动消失，可以监听
-                          |-----broker-2：host,port
-                          |-----broker-3：host,port
-            |-----topic-partition-registry：分区信息，leader follower信息，节点修改时，会推送到各个brokerState，以及consumer
-                          |-----topicA：leader，partition，followers
-                          |-----topicB：leader，partition，followers
-                          |-----topicC：leader，partition，followers
-            |-----consumer-offset：消费进度
-                          |-----topicA_group_partition：offset
-            |-----consumer-id-registry
-                          |-----consumer-group:
+  |---clusterName：集群根目录
+        |---topic-registry：Topic注册根目录
+
+        |---broker-id-registry：broker的信息，被broker和client监听，动态的更改topic-partition-registry
+                |---broker-1：host,port：临时节点，断联自动消失，可以监听
+                |---broker-2：host,port
+                |---broker-3：host,port
+        |---topic-partition-registry：分区信息，leader follower信息，节点修改时，会推送到各个brokerState，以及consumer
+                |---topicA：leader，partition，followers
+                |---topicB：leader，partition，followers
+                |---topicC：leader，partition，followers
+        |---consumer-offset：消费进度
+                |---topicA_group_partition：offset
+        |---consumer-id-registry
+                |---consumer-group:
+                          
+                          
+                          
+                          
+public static final String BASE = "/wmq";
+
+    public static final String TOPIC_REGISTRY = "topic-registry";
+    public static final String TOPIC_REGISTRY_SIGNAL = "topic-registry-signal";
+
+    public static final String BROKER_REGISTRY = "broker-registry";
+    public static final String PARTITION_REGISTRY = "partition-registry";
+    public static final String PARTITION_REGISTRY_VERSION = "partition-registry-version";
+
+    public static final String CLIENT_REGISTRY = "client-registry";//永久目录
+
+    public static final String CONSUMER_OFFSET_DIR = "consumer-offset";//永久目录
+    public static final String CONSUMER_OFFSET_NODE = "[%s|%s]";//${group}-${partition}";//消费进度 永久节点
+
+    public static final String CONSUMER_GROUP = "consumer-group-registry";//消费组关系，永久节点
+    public static final String CONSUMER_GROUP_INST_NODE = "[%s|%s|%s]";//${topic}-${group}-${partition}";//临时节点
 
 ```
 

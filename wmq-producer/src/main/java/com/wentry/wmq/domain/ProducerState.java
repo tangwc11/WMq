@@ -1,6 +1,7 @@
 package com.wentry.wmq.domain;
 
 import com.wentry.wmq.transport.PartitionSyncReq;
+import com.wentry.wmq.utils.json.JsonUtils;
 import com.wentry.wmq.utils.zk.ZkPaths;
 import com.wentry.wmq.config.WMqConfig;
 import com.wentry.wmq.domain.registry.zookeeper.ZkRegistry;
@@ -9,11 +10,15 @@ import com.wentry.wmq.domain.registry.clients.ClientInfo;
 import com.wentry.wmq.domain.registry.partition.PartitionInfo;
 import com.wentry.wmq.listener.ProducerBrokerRegistryListener;
 import org.apache.zookeeper.CreateMode;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.io.Closeable;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -27,6 +32,8 @@ import java.util.stream.Collectors;
  */
 @Component
 public class ProducerState implements SmartInitializingSingleton , DisposableBean {
+
+    private static final Logger log = LoggerFactory.getLogger(ProducerState.class);
 
     @Autowired
     ZkRegistry registry;
@@ -58,18 +65,31 @@ public class ProducerState implements SmartInitializingSingleton , DisposableBea
     }
 
     public void updatePartitions(PartitionSyncReq partitionSyncReq) {
-        if (getPartitionVersion() >= partitionSyncReq.getLastVersion()) {
-            return;
-        }
-        Map<String, Map<Integer, BrokerInfo>> newPartitions = new ConcurrentHashMap<>();
-        for (PartitionInfo partition : partitionSyncReq.getPartitions()) {
-            Map<Integer, BrokerInfo> partitionLeader = newPartitions.computeIfAbsent(partition.getTopic(), s -> new ConcurrentHashMap<>());
-            for (Map.Entry<Integer, String> ety : partition.getPartitionLeader().entrySet()) {
-                partitionLeader.put(ety.getKey(), brokerInfoMap.get(ety.getValue()));
+        try {
+            if (getPartitionVersion() >= partitionSyncReq.getLastVersion()) {
+                return;
             }
+            Map<String, Map<Integer, BrokerInfo>> newPartitions = new ConcurrentHashMap<>();
+            for (PartitionInfo partition : partitionSyncReq.getPartitions()) {
+                Map<Integer, BrokerInfo> partitionLeader = newPartitions.computeIfAbsent(partition.getTopic(), s -> new ConcurrentHashMap<>());
+                for (Map.Entry<Integer, String> ety : partition.getPartitionLeader().entrySet()) {
+                    BrokerInfo brokerInfo = brokerInfoMap.get(ety.getValue());
+                    if (brokerInfo == null) {
+                        List<BrokerInfo> brokerInfoList = registry.getBrokers(getClusterName());
+                        setBrokerInfoMap(brokerInfoList.stream().collect(Collectors.toMap(BrokerInfo::getBrokerId, o -> o)));
+                        brokerInfo = brokerInfoMap.get(ety.getValue());
+                    }
+                    if (brokerInfo == null) {
+                        log.error("brokerInfo still null, brokerInfoMap is:{},partitionSyncReq:{}", JsonUtils.toJson(brokerInfo), JsonUtils.toJson(partitionSyncReq));
+                    }
+                    partitionLeader.put(ety.getKey(), brokerInfo);
+                }
+            }
+            this.partitions = newPartitions;
+            this.partitionVersion = partitionSyncReq.getLastVersion();
+        } catch (Exception e) {
+            log.error("ProducerState.updatePartitions(" + "partitionSyncReq = " + JsonUtils.toJson(partitionSyncReq) + ")", e);
         }
-        this.partitions = newPartitions;
-        this.partitionVersion = partitionSyncReq.getLastVersion();
     }
 
     public ZkRegistry getRegistry() {
@@ -166,10 +186,10 @@ public class ProducerState implements SmartInitializingSingleton , DisposableBea
         /**
          * 1。监听broker的变化，更新brokerInfoMap
          */
-        registry.addWatch(
+        listeners.add(registry.addWatch(
                 ZkPaths.getBrokerRegistryPath(getClusterName()),
                 new ProducerBrokerRegistryListener(registry, this)
-        );
+        ));
     }
 
     private void registrySelf() {
@@ -209,8 +229,20 @@ public class ProducerState implements SmartInitializingSingleton , DisposableBea
         this.partitions = newPartitions;
     }
 
+    List<Closeable> listeners = new ArrayList<>();
+
     @Override
     public void destroy() throws Exception {
+        for (Closeable listener : listeners) {
+            try {
+                if (registry.isStart()) {
+                    log.info("closing listener:{}", listener);
+                    listener.close();
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
         registry.deletePath(ZkPaths.getClientRegistryPathNode(getClusterName(), "PRODUCER:" + getProducerId()));
     }
 }

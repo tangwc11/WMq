@@ -45,7 +45,7 @@ public class ProducerController {
      */
     @PostMapping("/partitions/sync")
     public PartitionSyncResp syncPartition(@RequestBody PartitionSyncReq partitionSyncReq) {
-        log.info("fresh partitions received :{}", partitionSyncReq);
+        log.info("fresh partitions received :{}", JsonUtils.toJson(partitionSyncReq));
 
         if (CollectionUtils.isEmpty(partitionSyncReq.getPartitions())) {
             return new PartitionSyncResp().setMsg("emp partitions");

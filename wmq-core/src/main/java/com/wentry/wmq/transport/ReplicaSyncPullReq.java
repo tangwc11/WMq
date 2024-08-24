@@ -14,6 +14,16 @@ public class ReplicaSyncPullReq implements Serializable {
     private long offset;
     private int pullSize;
     private String pullBrokerGroup;
+    private String from;
+
+    public String getFrom() {
+        return from;
+    }
+
+    public ReplicaSyncPullReq setFrom(String from) {
+        this.from = from;
+        return this;
+    }
 
     public String getPullBrokerGroup() {
         return pullBrokerGroup;

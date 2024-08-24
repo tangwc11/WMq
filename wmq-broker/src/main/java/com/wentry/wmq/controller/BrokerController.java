@@ -63,12 +63,11 @@ public class BrokerController implements SmartInitializingSingleton {
     public ReplicaSyncPushResp replicaSyncPush(@RequestBody ReplicaSyncPushReq req) {
         try {
             WriteRes res = brokerWriter.write(
-                    req.getTopic(), req.getBytes(), req.getPartition(), req.getPreOffset()
+                    req.getTopic(), req.getPartition()
             );
             if (StringUtils.isNoneEmpty(res.getFailMsg())) {
                 return new ReplicaSyncPushResp().setFailMsg(res.getFailMsg());
             }
-
             return new ReplicaSyncPushResp().setSuccess(true);
         } catch (Exception e) {
             e.printStackTrace();

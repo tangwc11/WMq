@@ -265,11 +265,11 @@ public class BrokerState implements SmartInitializingSingleton, DisposableBean {
         PartitionSyncReq req = new PartitionSyncReq().setPartitions(partitions).setLastVersion(getPartitionVersion() + 10);
         for (BrokerInfo broker : getBrokerInfoMap().values()) {
             PartitionSyncResp res = HttpUtils.post(UrlUtils.getPartitionsSyncUrl(broker), req, PartitionSyncResp.class);
-            log.info("partition sync res:{}, broker:{}", res, broker);
+            log.info("partition sync res:{}, broker:{}", JsonUtils.toJson(res), JsonUtils.toJson(broker));
         }
         for (Map.Entry<String, ClientInfo> ety : getClientInfos().entrySet()) {
             PartitionSyncResp res = HttpUtils.post(UrlUtils.getPartitionsSyncUrl(ety.getValue()), req, PartitionSyncResp.class);
-            log.info("partition sync res:{}, client:{}", res, ety.getValue());
+            log.info("partition sync res:{}, client:{}", JsonUtils.toJson(res), JsonUtils.toJson((ety.getValue())));
         }
     }
 
@@ -302,9 +302,6 @@ public class BrokerState implements SmartInitializingSingleton, DisposableBean {
             }
         }));
     }
-
-
-    List<Closeable> listeners = new ArrayList<>();
 
     private void initListener() {
         //broker节点变更监听
@@ -365,6 +362,8 @@ public class BrokerState implements SmartInitializingSingleton, DisposableBean {
         this.topicPartitionLeader = topicPartitionLeader;
         return this;
     }
+
+    List<Closeable> listeners = new ArrayList<>();
 
     @Override
     public void destroy() throws Exception {

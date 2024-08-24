@@ -29,6 +29,8 @@ public interface ZkRegistry {
     void registryBroker(BrokerInfo brokerInfo);
 
 
+    <T> boolean createNodeWithValue(CreateMode mode, String path, T val);
+
     <T> boolean updateVal(CreateMode mode, String path, T val);
 
     /**

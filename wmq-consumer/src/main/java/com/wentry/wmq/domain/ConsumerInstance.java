@@ -9,12 +9,12 @@ import com.wentry.wmq.transport.PullMsgResp;
 import com.wentry.wmq.utils.http.HttpUtils;
 import com.wentry.wmq.utils.http.UrlUtils;
 import com.wentry.wmq.utils.json.JsonUtils;
+import com.wentry.wmq.utils.zk.ZkPaths;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.ScheduledExecutorService;
@@ -69,8 +69,8 @@ public class ConsumerInstance {
         //5s一次上报offset
         scheduledExecutorService.scheduleAtFixedRate(this::reportAckOffset, 5, 5, TimeUnit.SECONDS);
 
-        //关闭钩子
-        Runtime.getRuntime().addShutdownHook(new Thread(this::stop));
+//        关闭钩子
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> stop(true)));
 
         return this;
     }
@@ -191,7 +191,11 @@ public class ConsumerInstance {
         return started;
     }
 
-    public void stop() {
+    public boolean stop(boolean deleteZkPath) {
+        log.info("stopping triggered, deleteZkPath:{}", deleteZkPath);
+        if (!this.started) {
+            return false;
+        }
         this.started = false;
         if (this.consumerThread != null) {
             this.consumerThread.interrupt();
@@ -204,6 +208,16 @@ public class ConsumerInstance {
             scheduledExecutorService.shutdownNow();
         }
         reportAckOffset();
+
+        if (deleteZkPath) {
+            //把自身的节点删除
+            consumerState.registry.deletePath(ZkPaths.getConsumerInstanceNode(
+                    consumerState.getClusterName(),
+                    getTopic(),
+                    getListener().consumerGroup(),
+                    getPartition()));
+        }
+        return true;
     }
 
 

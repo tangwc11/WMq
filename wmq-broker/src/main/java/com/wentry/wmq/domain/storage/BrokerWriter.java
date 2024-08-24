@@ -1,24 +1,19 @@
 package com.wentry.wmq.domain.storage;
 
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
+import com.wentry.wmq.common.Closable;
 import com.wentry.wmq.domain.BrokerState;
 import com.wentry.wmq.domain.isr.IsrSet;
 import com.wentry.wmq.domain.registry.brokers.BrokerInfo;
-import com.wentry.wmq.common.Closable;
-import com.wentry.wmq.transport.ReplicaSyncPullReq;
-import com.wentry.wmq.transport.ReplicaSyncPullResp;
-import com.wentry.wmq.transport.ReplicaSyncPushResp;
-import com.wentry.wmq.transport.WriteRes;
 import com.wentry.wmq.transport.ReplicaSyncPushReq;
+import com.wentry.wmq.transport.ReplicaSyncPushResp;
 import com.wentry.wmq.transport.WriteMsgReq;
-import com.wentry.wmq.utils.WMqThreadFactory;
+import com.wentry.wmq.transport.WriteRes;
 import com.wentry.wmq.utils.http.HttpUtils;
 import com.wentry.wmq.utils.http.UrlUtils;
-import com.wentry.wmq.utils.json.JsonUtils;
 import com.wentry.wmq.utils.seriliaztion.SerializationUtils;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.MapUtils;
-import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.SmartInitializingSingleton;
@@ -33,6 +28,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * @Description:
@@ -48,92 +44,17 @@ public class BrokerWriter implements Closable, SmartInitializingSingleton {
 
     private final Map<String, DbWriter> dbWriterMap = new ConcurrentHashMap<>();
 
-    private final ThreadPoolExecutor pullSyncThread = new ThreadPoolExecutor(
-            1,
-            1,
-            1,
-            TimeUnit.HOURS,
-            new LinkedBlockingDeque<>(100),
-            new WMqThreadFactory("", true, 1),
-            new ThreadPoolExecutor.CallerRunsPolicy());
-
-
     //带preOffset检查的write，用作同步副本
-    public WriteRes write(String topic, byte[] bytes, int partition, long preOffset) throws FileNotFoundException {
+    public WriteRes write(String topic, int partition) throws FileNotFoundException {
         DbWriter dbWriter = getDbWriter(topic, partition);
 
-        if (dbWriter.getOffset().get() > preOffset) {
-            return new WriteRes().setFailMsg("offset:" + preOffset + " behind requested offset:" + dbWriter.getOffset());
-        }
-
-        if (dbWriter.getOffset().get() < preOffset) {
-            return syncAllDataFromLeader(topic, partition, preOffset, dbWriter);
-        }else{
-            return dbWriter.write(bytes);
-        }
+        return syncAllDataFromLeader(topic, partition, dbWriter);
     }
 
-
-    public void trigger(){
-        for (Map.Entry<String, DbWriter> ety : dbWriterMap.entrySet()) {
-            Map<String, Map<Integer, BrokerInfo>> topicPartitionLeader = brokerState.getTopicPartitionLeader();
-
-
-
-            DbWriter value = ety.getValue();
-        }
-    }
-
-    private WriteRes syncAllDataFromLeader(String topic, int partition, long preOffset, DbWriter dbWriter) {
-        //单线程执行，dbWriter暂不保证线程安全
-        pullSyncThread.execute(() -> {
-            doSyncAll(topic, partition, preOffset, dbWriter);
-        });
+    private WriteRes syncAllDataFromLeader(String topic, int partition, DbWriter dbWriter) {
+        //异步的，里面有专门的一个线程处理
+        dbWriter.syncAll(topic, partition, brokerState);
         return new WriteRes();
-    }
-
-    private void doSyncAll(String topic, int partition, long preOffset, DbWriter dbWriter) {
-//        if (dbWriter.getOffset().get() >= preOffset) {
-//            return;
-//        }
-        //1.拿到leader信息
-        Map<Integer, BrokerInfo> partitionLeader = brokerState.getTopicPartitionLeader().get(topic);
-        if (MapUtils.isEmpty(partitionLeader)) {
-            log.error("pull syncAll, no leader found for topic:{}", topic);
-            return;
-        }
-        BrokerInfo brokerInfo = partitionLeader.get(partition);
-        if (brokerInfo == null) {
-            log.error("pull syncAll, no leader found for topic:{}", topic);
-            return;
-        }
-
-        ReplicaSyncPullResp resp;
-        WriteRes write = null;
-        do {
-            //2.循环拉取数据
-            String path = UrlUtils.getReplicaSyncPullUrl(brokerInfo);
-            ReplicaSyncPullReq req = new ReplicaSyncPullReq().setTopic(topic).setPartition(partition)
-                    .setOffset(dbWriter.getOffset().get()).setPullSize(500)
-                    //按id进行隔离，防止offset反复横跳
-                    .setPullBrokerGroup(brokerState.getBrokerId());
-            resp = HttpUtils.post(path, req, ReplicaSyncPullResp.class);
-            if (resp == null) {
-                log.info("resp null for path:{}, req:{}", path, JsonUtils.toJson(req));
-                break;
-            }
-            if (resp.getData() != null) {
-                for (byte[] data : resp.getData()) {
-                    if (data != null) {
-                        write = dbWriter.write(data);
-                    }
-                }
-                log.info("synced data count:{},topic:{},partition:{},currOffset:{}",
-                        resp.getData().size(), topic, partition, dbWriter.getOffset());
-            }
-        } while (!resp.isToEnd()
-                && dbWriter.getOffset().get() < preOffset
-                && write != null && StringUtils.isBlank(write.getFailMsg()));
     }
 
     public WriteRes write(String topic, byte[] bytes, int partition) throws FileNotFoundException {
@@ -190,8 +111,8 @@ public class BrokerWriter implements Closable, SmartInitializingSingleton {
              * 1。 上次写入的offset，此次写入的offset
              * 2。 此次写入的消息体
              */
-            //todo wch 这里可以扩展acks，目前用异步处理
-//            asyncBroadCastReplica(req, bytes, writeRes);
+            //主动通知follower进行同步
+            asyncBroadCastReplica(req, writeRes);
 
             return writeRes;
         } catch (Exception e) {
@@ -212,13 +133,33 @@ public class BrokerWriter implements Closable, SmartInitializingSingleton {
                     .build(),
             new ThreadPoolExecutor.CallerRunsPolicy());
 
-    private void asyncBroadCastReplica(WriteMsgReq req, byte[] bytes, WriteRes writeRes) {
+
+    Map<String, AtomicInteger> topicCount = new ConcurrentHashMap<>();
+
+    private void asyncBroadCastReplica(WriteMsgReq req, WriteRes writeRes) {
 
         syncThread.execute(new Runnable() {
             @Override
             public void run() {
                 Map<String, Map<Integer, IsrSet>> isr = brokerState.getIsr();
-                Map<Integer, Set<String>> partitionFollowers = brokerState.getTopicPartitionsFollowers().get(req.getMsg().getTopic());
+
+                AtomicInteger count = topicCount.get(req.getMsg().getTopic());
+                if (count==null) {
+                    count = new AtomicInteger();
+                    topicCount.put(req.getMsg().getTopic(), count);
+                }
+                if (count.incrementAndGet() < 100) {
+                    return;
+                }
+                //通知follower同步，并重置计数器
+                count.set(0);
+
+                doBroadCastSyncAll();
+            }
+
+            private void doBroadCastSyncAll() {
+                Map<Integer, Set<String>> partitionFollowers = brokerState.getTopicPartitionsFollowers()
+                        .get(req.getMsg().getTopic());
                 if (MapUtils.isEmpty(partitionFollowers)) {
                     return;
                 }
@@ -226,7 +167,6 @@ public class BrokerWriter implements Closable, SmartInitializingSingleton {
                 IsrSet isrSet = new IsrSet().setOffset(writeRes.getLatestOffset());
                 ReplicaSyncPushReq replicaSyncPushReq = new ReplicaSyncPushReq()
                         .setTopic(req.getMsg().getTopic())
-                        .setBytes(bytes)
                         .setPartition(req.getMsg().getPartition())
                         .setPreOffset(writeRes.getPreOffset());
                 for (String follower : followers) {
@@ -268,7 +208,7 @@ public class BrokerWriter implements Closable, SmartInitializingSingleton {
                     for (Integer partition : partitions) {
                         try {
                             DbWriter dbWriter = getDbWriter(topic, partition);
-                            syncAllDataFromLeader(topic, partition, dbWriter.getOffset().get(), dbWriter);
+                            syncAllDataFromLeader(topic, partition, dbWriter);
                         } catch (FileNotFoundException e) {
                             e.printStackTrace();
                         }
@@ -276,7 +216,7 @@ public class BrokerWriter implements Closable, SmartInitializingSingleton {
 
                 }
             }
-        }, 5, 5, TimeUnit.SECONDS);
+        }, 0, 5, TimeUnit.SECONDS);
 
     }
 }

@@ -1,5 +1,6 @@
 package com.wentry.wmq.domain;
 
+import com.wentry.wmq.domain.listener.ConsumerInstanceUnRegistryListener;
 import com.wentry.wmq.openapi.WmqListener;
 import com.wentry.wmq.domain.registry.clients.ConsumerInstanceInfo;
 import com.wentry.wmq.domain.registry.offset.OffsetInfo;
@@ -22,11 +23,15 @@ import org.apache.commons.collections4.MapUtils;
 import org.apache.zookeeper.CreateMode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.BeansException;
 import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationContext;
+import org.springframework.context.ApplicationContextAware;
 import org.springframework.stereotype.Component;
 
+import java.io.Closeable;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -40,7 +45,7 @@ import java.util.stream.Collectors;
  * @Author: tangwc
  */
 @Component
-public class ConsumerState implements SmartInitializingSingleton, DisposableBean {
+public class ConsumerState implements SmartInitializingSingleton, DisposableBean, ApplicationContextAware {
 
     private static final Logger log = LoggerFactory.getLogger(ConsumerState.class);
 
@@ -58,6 +63,7 @@ public class ConsumerState implements SmartInitializingSingleton, DisposableBean
     private Map<String, BrokerInfo> brokerInfoMap = new ConcurrentHashMap<>();
     private Map<String, Map<Integer, BrokerInfo>> partitions = new ConcurrentHashMap<>();
     private long partitionVersion;
+    private ApplicationContext ctx;
 
     public long getPartitionVersion() {
         return partitionVersion;
@@ -207,93 +213,111 @@ public class ConsumerState implements SmartInitializingSingleton, DisposableBean
             Set<Integer> partitions = partitionToLeader.keySet();
             List<ConsumerInstanceInfo> cInstInfos = new ArrayList<>();
             for (Integer partition : partitions) {
+                String path = ZkPaths.getConsumerInstanceNode(clusterName, topic, listener.consumerGroup(), partition);
                 ConsumerInstanceInfo consumerInstanceInfo = registry.getPathValue(
-                        ZkPaths.getConsumerInstanceNode(clusterName, topic, listener.consumerGroup(), partition),
-                        ConsumerInstanceInfo.class
+                        path, ConsumerInstanceInfo.class
                 );
+                log.info("path:{},consumerInstanceInfo:{}", path, JsonUtils.toJson(consumerInstanceInfo));
                 if (consumerInstanceInfo != null) {
                     //有consumer实例占据了
                     cInstInfos.add(consumerInstanceInfo);
-                    continue;
                 } else {
                     //没有实例，自己创建实例
                     getConsumerInstanceMap().put(
                             MixUtils.consumerInstanceKey(topic, partition, listener.consumerGroup()),
-                            createConsumerInstance(listener, partition, topic)
-                                    //初始从0开始消费，如果要从最后，需要读取请求broker接口。可以扩展为HEAT或者TAIL
-                                    .setLastAckOffset(fetchLastAckOffset(topic, listener.consumerGroup(), partition))
+                            createConsumerInstance(listener, partition, topic,"init create primary listener")
                     );
                 }
             }
+
             //如果没有空缺的，需要别人让渡自己
             if (MapUtils.isEmpty(getConsumerInstanceMap())) {
-
-                // 使用流和分组统计每个元素出现的次数
-                Map<String, Long> frequencyMap = cInstInfos.stream()
-                        .collect(Collectors.groupingBy(ConsumerInstanceInfo::getConsumerId, Collectors.counting()));
-
-                // 找出出现次数最多的元素
-                Map.Entry<String, Long> mostCommonEntry = frequencyMap.entrySet().stream()
-                        .max(Map.Entry.comparingByValue())
-                        .orElseThrow(() -> new RuntimeException("List is empty"));
-                Map<String, ConsumerInstanceInfo> map = cInstInfos.stream().collect(
-                        Collectors.toMap(ConsumerInstanceInfo::getConsumerId, o -> o, (o, n) -> n)
-                );
-                ConsumerInstanceInfo info = map.get(mostCommonEntry.getKey());
-                if (info == null) {
-                    throw new RuntimeException("none re-balance node found");
-                }
-
-                //发起re-balance请求
-                ReBalanceResp resp = HttpUtils.post(
-                        UrlUtils.getConsumerReBalanceUrl(info),
-                        new ReBalanceReq()
-                                .setGroup(listener.consumerGroup())
-                                .setPartition(info.getPartition())
-                                .setTopic(topic),
-                        ReBalanceResp.class
-                );
-                if (resp != null && resp.isSuccess()) {
-                    getConsumerInstanceMap().put(
-                            MixUtils.consumerInstanceKey(topic, info.getPartition(), listener.consumerGroup()),
-                            createConsumerInstance(listener, info.getPartition(), topic)
-                                    //接过re-balance上次的进度继续消费
-                                    .setLastAckOffset(resp.getLastOffset())
-                    );
-                    //更新实例信息
-                    boolean res = registry.updateVal(
-                            CreateMode.EPHEMERAL,
-                            ZkPaths.getConsumerInstanceNode(clusterName, topic, listener.consumerGroup(), info.getPartition()),
-                            info.setPartition(info.getPartition()).setHost(getHost()).setPort(getPort()).setConsumerId(getConsumerId())
-                    );
-
-                    if (!res) {
-                        log.error("re-balance update node res:{}, node:{}", res, JsonUtils.toJson(info));
-                        getConsumerInstanceMap().remove(MixUtils.consumerInstanceKey(topic, info.getPartition(), listener.consumerGroup()));
-                    }else{
-                        log.info("re-balance update node res:{}, node:{}", res, JsonUtils.toJson(info));
-                    }
-                } else {
-                    throw new RuntimeException("re-balance fail, msg:" + resp);
-                }
+                doReBalance(listener, topic, cInstInfos);
             }
-
 
             //开启实例消费
-            for (ConsumerInstance inst : getConsumerInstanceMap().values()) {
-                //add node
-                boolean res = registry.updateVal(
-                        CreateMode.EPHEMERAL,
-                        ZkPaths.getConsumerInstanceNode(clusterName, topic, listener.consumerGroup(), inst.getPartition()),
-                        new ConsumerInstanceInfo().setPartition(inst.getPartition()).setHost(getHost()).setPort(getPort()).setConsumerId(getConsumerId())
-                );
-                if (res) {
-                    inst.start();
-                    log.info("started consumer inst:{}", JsonUtils.toJson(inst));
-                } else {
-                    log.info("create node fail for inst:{}", JsonUtils.toJson(inst));
-                }
+            startPrimaryListener(listener, topic);
+        }
+    }
+
+    private void startPrimaryListener(WmqListener listener, String topic) {
+        for (ConsumerInstance inst : getConsumerInstanceMap().values()) {
+            if (inst.isStarted()) {
+                continue;
             }
+            //add node
+            boolean res = registry.createNodeWithValue(
+                    CreateMode.EPHEMERAL,
+                    ZkPaths.getConsumerInstanceNode(clusterName, topic, listener.consumerGroup(), inst.getPartition()),
+                    new ConsumerInstanceInfo().setPartition(inst.getPartition()).setHost(getHost()).setPort(getPort()).setConsumerId(getConsumerId())
+            );
+            if (res) {
+                inst.start();
+                log.info("started consumer inst:{}", JsonUtils.toJson(inst));
+            } else {
+                log.info("create node fail for inst:{}", JsonUtils.toJson(inst));
+            }
+        }
+
+        //清理一遍
+        getConsumerInstanceMap().values().removeIf(x -> !x.isStarted());
+    }
+
+    private void doReBalance(WmqListener listener, String topic, List<ConsumerInstanceInfo> cInstInfos) {
+        // 使用流和分组统计每个元素出现的次数
+        Map<String, Long> frequencyMap = cInstInfos.stream()
+                .collect(Collectors.groupingBy(ConsumerInstanceInfo::getConsumerId, Collectors.counting()));
+
+        // 找出出现次数最多的元素
+        Map.Entry<String, Long> mostCommonEntry = frequencyMap.entrySet().stream()
+                .max(Map.Entry.comparingByValue())
+                .orElseThrow(() -> new RuntimeException("List is empty"));
+        Map<String, ConsumerInstanceInfo> map = cInstInfos.stream().collect(
+                Collectors.toMap(ConsumerInstanceInfo::getConsumerId, o -> o, (o, n) -> n)
+        );
+        ConsumerInstanceInfo info = map.get(mostCommonEntry.getKey());
+        if (info == null) {
+            throw new RuntimeException("none re-balance node found");
+        }
+
+        //发起re-balance请求
+        ReBalanceResp resp = HttpUtils.post(
+                UrlUtils.getConsumerReBalanceUrl(info),
+                new ReBalanceReq()
+                        .setGroup(listener.consumerGroup())
+                        .setPartition(info.getPartition())
+                        .setTopic(topic),
+                ReBalanceResp.class
+        );
+        if (resp != null && resp.isSuccess()) {
+            createAndStartConsumerInstance(listener, topic, info, resp);
+        } else {
+            log.error("re-balance fail, msg:{}", JsonUtils.toJson(resp));
+        }
+    }
+
+    private void createAndStartConsumerInstance(WmqListener listener, String topic, ConsumerInstanceInfo info, ReBalanceResp resp) {
+        ConsumerInstance instance = createConsumerInstance(listener, info.getPartition(), topic, "do re-balance")
+                //接过re-balance上次的进度继续消费
+                .setLastAckOffset(resp.getLastOffset());
+
+        getConsumerInstanceMap().put(
+                MixUtils.consumerInstanceKey(topic, info.getPartition(), listener.consumerGroup()),
+                instance
+        );
+        //更新实例信息
+        boolean res = registry.createNodeWithValue(
+                CreateMode.EPHEMERAL,
+                ZkPaths.getConsumerInstanceNode(clusterName, topic, listener.consumerGroup(), info.getPartition()),
+                info.setPartition(info.getPartition()).setHost(getHost()).setPort(getPort()).setConsumerId(getConsumerId())
+        );
+
+        if (!res) {
+            log.error("re-balance update node res:{}, node:{}", res, JsonUtils.toJson(info));
+            getConsumerInstanceMap().remove(MixUtils.consumerInstanceKey(topic, info.getPartition(), listener.consumerGroup()));
+        } else {
+            instance.start();
+            log.info("re-balance update node res:{}, node:{}", res, JsonUtils.toJson(info));
         }
     }
 
@@ -316,8 +340,14 @@ public class ConsumerState implements SmartInitializingSingleton, DisposableBean
      */
     Map<String, ConsumerInstance> consumerInstanceMap = new ConcurrentHashMap<>();
 
-    private ConsumerInstance createConsumerInstance(WmqListener listener, Integer partition, String topic) {
-        return new ConsumerInstance(this, listener, partition, topic);
+    public ConsumerInstance createConsumerInstance(WmqListener listener, Integer partition, String topic, String source) {
+        ConsumerInstance instance = new ConsumerInstance(this, listener, partition, topic)
+                //初始从0开始消费，如果要从最后，需要读取请求broker接口。可以扩展为HEAT或者TAIL
+                .setLastAckOffset(fetchLastAckOffset(topic, listener.consumerGroup(), partition));
+
+        log.info("create createConsumerInstance ,topic:{},partition:{},source:{},instance:{}", topic, partition, source, instance);
+
+        return instance;
     }
 
     private void registrySelf() {
@@ -334,10 +364,16 @@ public class ConsumerState implements SmartInitializingSingleton, DisposableBean
 
     private void initListener() {
         //监听broker上下线
-        registry.addWatch(
+        zkListeners.add(registry.addWatch(
                 ZkPaths.getBrokerRegistryPath(getClusterName()),
                 new ConsumerBrokerRegistryListener(this, registry)
-        );
+        ));
+
+        //监听consumerInstance下线
+        zkListeners.add(registry.addWatch(
+                ZkPaths.getConsumerInstanceDir(clusterName),
+                new ConsumerInstanceUnRegistryListener(this, registry, ctx)
+        ));
     }
 
     private void initFromRegistry() {
@@ -406,16 +442,26 @@ public class ConsumerState implements SmartInitializingSingleton, DisposableBean
         }
     }
 
+    List<Closeable> zkListeners = new ArrayList<>();
+
     @Override
-    public void destroy() {
+    public void destroy() throws Exception {
+        for (Closeable listener : zkListeners) {
+            try {
+                if (registry.isStart()) {
+                    log.info("closing listener:{}", listener);
+                    listener.close();
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+
         registry.deletePath(ZkPaths.getClientRegistryPathNode(getClusterName(), "CONSUMER:" + getConsumerId()));
 
         for (Map.Entry<String, ConsumerInstance> consumerInstances : getConsumerInstanceMap().entrySet()) {
             ConsumerInstance instance = consumerInstances.getValue();
-            registry.deletePath(ZkPaths.getConsumerInstanceNode(getClusterName(),
-                    instance.getTopic(),
-                    instance.getListener().consumerGroup(),
-                    instance.getPartition()));
+            instance.stop(true);
         }
 
     }
@@ -442,5 +488,10 @@ public class ConsumerState implements SmartInitializingSingleton, DisposableBean
 
 
         System.out.println(mostCommonEntry);
+    }
+
+    @Override
+    public void setApplicationContext(ApplicationContext applicationContext) throws BeansException {
+        this.ctx = applicationContext;
     }
 }

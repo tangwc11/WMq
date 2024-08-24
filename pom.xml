@@ -15,9 +15,10 @@
     <packaging>pom</packaging>
 
     <modules>
+        <module>wmq-broker</module>
+        <module>wmq-admin</module>
         <module>wmq-producer</module>
         <module>wmq-consumer</module>
-        <module>wmq-admin</module>
     </modules>
 
     <properties>
@@ -28,6 +29,7 @@
         <netty_version>4.1.36.Final</netty_version>
         <protostuff.version>1.0.10</protostuff.version>
         <objenesis.version>2.4</objenesis.version>
+        <spring-boot.version>2.6.0</spring-boot.version>
     </properties>
 
     <dependencyManagement>
@@ -162,5 +164,6 @@
         </dependencies>
 
     </dependencyManagement>
+
 
 </project>

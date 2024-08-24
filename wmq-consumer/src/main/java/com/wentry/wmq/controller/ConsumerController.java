@@ -48,6 +48,8 @@ public class ConsumerController {
     @RequestMapping("/rebalance")
     public ReBalanceResp reBalance(@RequestBody ReBalanceReq req) {
 
+        log.info("received re-balance req:{}", JsonUtils.toJson(req));
+
         ConsumerInstance instance = consumerState.getConsumerInstanceMap().get(
                 MixUtils.consumerInstanceKey(req.getTopic(), req.getPartition(), req.getGroup())
         );
@@ -57,10 +59,15 @@ public class ConsumerController {
         }
 
         //停止实例
-        instance.stop();
+        //这里删节点，会触发事件，但是此次请求返回会再增加节点，因此这个事件删除可以忽略
+        //只是为了讲临时节点的归属换成请求re-balance的session
+        boolean stopped = instance.stop(true);
+        long lastAckOffset = instance.getLastAckOffset();
         log.info("instance :{} stopped...", JsonUtils.toJson(instance));
-
-        return new ReBalanceResp().setSuccess(true).setLastOffset(instance.getLastAckOffset());
+        consumerState.getConsumerInstanceMap().remove(
+                MixUtils.consumerInstanceKey(req.getTopic(), req.getPartition(), req.getGroup())
+        );
+        return new ReBalanceResp().setSuccess(stopped).setLastOffset(lastAckOffset);
     }
 
 }
