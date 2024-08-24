@@ -6,12 +6,12 @@ WMq是MQ消息中间件的一个最小实现，设计思想借鉴了Kafka+Rocket
 
 类似于Kafka，WMq有以下几大角色：
 
-- **Zookeeper**：使用Zookeeper作为注册中心和协调中心，利用其CP特性实现节点状态统一，已经提供的watch机制触发集群状态变更
+- **Zookeeper**：使用Zookeeper作为注册中心和协调中心，利用其CP特性实现节点状态统一，以及提供的watch机制触发集群状态变更
 - **Broker**：核心角色，几大核心功能：对接Producer负责消息写入和存储，对接Consumer负责消息的读取。
 - **Client**：有两个角色Producer和Consumer
   - **Producer**：消息生产者，通过Zookeeper连接Broker进行消息写入
   - **Consumer**（Group）：消息的消费者，通过Zookeeper连接Broker进行消息读取，使用**Pull模式**拉取消息
-- **Admin**：提供基本的Dashboard和Topic的增（已实现）删改查，实际是对Zookeeper节点的遍历
+- **Admin**：提供基本的Dashboard和Topic的增（已实现）删改查，实际是对Zookeeper节点的增删改查
 
 
 
